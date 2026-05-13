@@ -9,6 +9,7 @@ import testRoutes from "./routes/test.js";
 
 import { runStockWorker } from "./workers/stockWorker.js";
 import { runDirectorWorker } from "./workers/directorWorker.js";
+import { scheduleAgent } from "./core/agentScheduler.js";
 
 const app = express();
 
@@ -41,4 +42,16 @@ app.listen(PORT, () => {
   setInterval(() => {
     runDirectorWorker();
   }, 1000 * 60 * 15);
+
+  scheduleAgent({
+  agentName: "Agent Stock",
+  intervalMs: 1000 * 60 * 5,
+  run: runStockWorker
+});
+
+scheduleAgent({
+  agentName: "Agent Directeur IA",
+  intervalMs: 1000 * 60 * 15,
+  run: runDirectorWorker
+});
 });

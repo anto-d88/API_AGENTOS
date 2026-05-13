@@ -1,16 +1,23 @@
-import { autoDirectorData } from "../services/director/autoDirector.js";
+import { runAgentCycle }
+from "../core/agentCycle.js";
 
-export async function runDirectorWorker() {
-  try {
-    console.log("🧠 Director Worker lancé");
+import {
+  autoDirectorData
+} from "../services/director/autoDirector.js";
 
-    const result = await autoDirectorData();
+export async function
+runDirectorWorker() {
 
-    console.log("✅ Director Worker terminé", result);
+  return runAgentCycle({
 
-    return result;
-  } catch (error) {
-    console.error("❌ Director Worker erreur", error.message);
-    return null;
-  }
+    agentName:
+      "Agent Directeur IA",
+
+    execute:
+      async () => {
+
+        return await autoDirectorData();
+
+      }
+  });
 }

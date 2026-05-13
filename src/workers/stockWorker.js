@@ -1,3 +1,5 @@
+import { runAgentCycle } from "../core/agentCycle.js";
+
 import {
   checkStockData
 } from "../services/stock/checkStock.js";
@@ -5,29 +7,16 @@ import {
 export async function
 runStockWorker() {
 
-  try {
+  return runAgentCycle({
 
-    console.log(
-      "📦 Stock Worker lancé"
-    );
+    agentName:
+      "Agent Stock",
 
-    const result =
-      await checkStockData();
+    execute:
+      async () => {
 
-    console.log(
-      "✅ Stock Worker terminé",
-      result
-    );
+        return await checkStockData();
 
-    return result;
-
-  } catch (error) {
-
-    console.error(
-      "❌ Stock Worker erreur",
-      error.message
-    );
-
-    return null;
-  }
+      }
+  });
 }
