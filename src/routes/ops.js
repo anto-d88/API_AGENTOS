@@ -1,5 +1,8 @@
+import express from "express";
 import OpenAI from "openai";
 import { createClient } from "@supabase/supabase-js";
+
+const router = express.Router();
 
 function normalizeStatus(status) {
   return String(status || "")
@@ -138,7 +141,7 @@ async function sendTelegramMessage(message) {
     if (!token || !chatId) {
       return {
         ok: false,
-        error: "Telegram non configuré dans Vercel"
+        error: "Telegram non configuré"
       };
     }
 
@@ -393,7 +396,7 @@ async function checkStock(req, res) {
           status: "open",
           completed: false,
           from_agent: "Agent Stock",
-          to_agent: "Agent Chef d’entreprise"
+          to_agent: "Agent Directeur IA"
         }
       ]);
 
@@ -702,7 +705,7 @@ Réponds UNIQUEMENT en JSON valide :
     "title": "Action courte",
     "description": "Action concrète à faire",
     "priority": "urgent|high|medium|low",
-    "agent_target": "Agent Stock|Agent Commandes|Agent Communication Client|Agent Développement Commercial|Agent Comptabilité|Agent Chef d’entreprise"
+    "agent_target": "Agent Stock|Agent Commandes|Agent Communication Client|Agent Développement Commercial|Agent Comptabilité|Agent Directeur IA"
   }
 ]
 `;
@@ -724,7 +727,7 @@ Réponds UNIQUEMENT en JSON valide :
     const title = decision.title || "Décision IA";
     const description = decision.description || "Action à vérifier.";
     const priority = decision.priority || "medium";
-    const agentTarget = decision.agent_target || "Agent Chef d’entreprise";
+    const agentTarget = decision.agent_target || "Agent Directeur IA";
 
     const { data: existingTask } = await agentos
       .from("agent_tasks")
@@ -1078,7 +1081,7 @@ ${alertsText}
 RÈGLES :
 - Tu dois créer au minimum 5 actions même si les données sont faibles.
 - Organise la journée intelligemment.
-- Respecte les créneaux livraison.
+- Respecte les créneaux livraison 11h00, 13h00, 15h00.
 - Prévois toujours : vérification commandes, stock/courses, préparation cuisine, livraison, nettoyage, administratif/prospection.
 - Réponse UNIQUEMENT en JSON valide.
 - Ne mets aucun texte avant ou après le JSON.
@@ -1243,40 +1246,28 @@ async function executePlanningActions(req, res) {
     const results = [];
 
     for (const action of actions) {
-
-      // CREATE
       if (action.action === "create") {
+        const cleanTime =
+          action.planned_time && String(action.planned_time).trim() !== ""
+            ? String(action.planned_time).slice(0, 5)
+            : null;
 
-        const { data, error } =
-          await agentos
-            .from("agent_planning")
-            .insert([
-              {
-                title:
-                  action.title ||
-                  "Nouvelle action",
-
-                description:
-                  action.description || "",
-
-                planned_date:
-                  action.planned_date,
-
-                planned_time:
-                  action.planned_time || null,
-
-                priority:
-                  action.priority ||
-                  "medium",
-
-                generated_by_ai: true,
-
-                status: "planned",
-                completed: false
-              }
-            ])
-            .select()
-            .single();
+        const { data, error } = await agentos
+          .from("agent_planning")
+          .insert([
+            {
+              title: action.title || "Nouvelle action",
+              description: action.description || "",
+              planned_date: action.planned_date,
+              planned_time: cleanTime,
+              priority: String(action.priority || "medium").toLowerCase(),
+              generated_by_ai: true,
+              status: "planned",
+              completed: false
+            }
+          ])
+          .select()
+          .single();
 
         if (error) {
           results.push({
@@ -1292,44 +1283,21 @@ async function executePlanningActions(req, res) {
         }
       }
 
-      // UPDATE
-      if (
-        action.action === "update" &&
-        action.task_id
-      ) {
-
+      if (action.action === "update" && action.task_id) {
         const updates = {};
 
-        if (action.title)
-          updates.title =
-            action.title;
+        if (action.title) updates.title = action.title;
+        if (action.description) updates.description = action.description;
+        if (action.planned_date) updates.planned_date = action.planned_date;
+        if (action.planned_time) updates.planned_time = action.planned_time;
+        if (action.priority) updates.priority = action.priority;
 
-        if (action.description)
-          updates.description =
-            action.description;
-
-        if (action.planned_date)
-          updates.planned_date =
-            action.planned_date;
-
-        if (action.planned_time)
-          updates.planned_time =
-            action.planned_time;
-
-        if (action.priority)
-          updates.priority =
-            action.priority;
-
-        const { data, error } =
-          await agentos
-            .from("agent_planning")
-            .update(updates)
-            .eq(
-              "id",
-              action.task_id
-            )
-            .select()
-            .single();
+        const { data, error } = await agentos
+          .from("agent_planning")
+          .update(updates)
+          .eq("id", action.task_id)
+          .select()
+          .single();
 
         if (error) {
           results.push({
@@ -1345,20 +1313,11 @@ async function executePlanningActions(req, res) {
         }
       }
 
-      // DELETE
-      if (
-        action.action === "delete" &&
-        action.task_id
-      ) {
-
-        const { error } =
-          await agentos
-            .from("agent_planning")
-            .delete()
-            .eq(
-              "id",
-              action.task_id
-            );
+      if (action.action === "delete" && action.task_id) {
+        const { error } = await agentos
+          .from("agent_planning")
+          .delete()
+          .eq("id", action.task_id);
 
         if (error) {
           results.push({
@@ -1379,7 +1338,6 @@ async function executePlanningActions(req, res) {
       success: true,
       results
     });
-
   } catch (error) {
     return res.status(500).json({
       success: false,
@@ -1390,66 +1348,54 @@ async function executePlanningActions(req, res) {
 
 async function updatePlanningStatus(req, res) {
   try {
+    const { agentos } = getClients();
 
-    const { agentos } =
-      getClients();
+    const { id, completed, status, planned_date } = req.body;
 
-    const {
-      id,
-      completed,
-      status,
-      planned_date
-    } = req.body;
+    if (!id) {
+      return res.status(400).json({
+        success: false,
+        error: "id obligatoire"
+      });
+    }
 
     const updates = {};
 
-    if (
-      completed !== undefined
-    ) {
-      updates.completed =
-        completed;
-    }
+    if (completed !== undefined) updates.completed = completed;
+    if (status) updates.status = status;
+    if (planned_date) updates.planned_date = planned_date;
 
-    if (status) {
-      updates.status =
-        status;
-    }
-
-    if (planned_date) {
-      updates.planned_date =
-        planned_date;
-    }
-
-    const {
-      data,
-      error
-    } = await agentos
+    const { data, error } = await agentos
       .from("agent_planning")
       .update(updates)
       .eq("id", id)
       .select()
       .single();
 
-    if (error) {
-      throw error;
-    }
+    if (error) throw error;
+
+    await createLog(agentos, {
+      agent_name: "Agent Planning IA",
+      action_type: "planning_status_update",
+      title: "Planning mis à jour",
+      description: `${data.title} - statut : ${data.status}`,
+      status: "success",
+      priority: data.priority || "medium"
+    });
 
     return res.status(200).json({
       success: true,
       planning: data
     });
-
   } catch (error) {
-
     return res.status(500).json({
       success: false,
       error: error.message
     });
-
   }
 }
 
-export default async function handler(req, res) {
+router.all("/", async (req, res) => {
   try {
     const action = req.query.action;
 
@@ -1462,7 +1408,7 @@ export default async function handler(req, res) {
 
     if (action === "telegram-test") {
       const result = await sendTelegramMessage(
-        "✅ Test Telegram AgentOS réussi"
+        "✅ Test Telegram AgentOS Railway réussi"
       );
 
       return res.status(200).json({
@@ -1477,8 +1423,12 @@ export default async function handler(req, res) {
     if (action === "check-orders") return checkOrders(req, res);
     if (action === "daily-report") return dailyReport(req, res);
     if (action === "auto-director") return autoDirector(req, res);
-    if (action ==="execute-planning-actions") {return executePlanningActions(req,res);}
-    if (action ==="update-planning-status") {return updatePlanningStatus(req,res);}
+    if (action === "execute-planning-actions") {
+      return executePlanningActions(req, res);
+    }
+    if (action === "update-planning-status") {
+      return updatePlanningStatus(req, res);
+    }
 
     return res.status(400).json({
       error: "Action inconnue",
@@ -1495,7 +1445,9 @@ export default async function handler(req, res) {
         "add-to-planning",
         "get-planning",
         "generate-planning",
-        "move-planning-event"
+        "move-planning-event",
+        "execute-planning-actions",
+        "update-planning-status"
       ]
     });
   } catch (error) {
@@ -1503,4 +1455,6 @@ export default async function handler(req, res) {
       error: error.message
     });
   }
-}
+});
+
+export default router;

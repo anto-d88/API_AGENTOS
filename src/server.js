@@ -1,5 +1,5 @@
 import dotenv from "dotenv";
-
+import opsRoutes from "./routes/ops.js";
 dotenv.config();
 
 import express from "express";
@@ -25,7 +25,7 @@ app.get("/", (req, res) => {
 });
 
 app.use("/api", testRoutes);
-
+app.use("/api/ops", opsRoutes);
 const PORT =
   process.env.PORT || 3000;
 
