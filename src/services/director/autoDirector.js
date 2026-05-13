@@ -1,5 +1,6 @@
 import { getClients } from "../clients.js";
 import { createLog } from "../logger.js";
+import { getAgentMemory } from "../memory/getAgentMemory.js";
 
 function normalizeStatus(status) {
   return String(status || "")
@@ -78,6 +79,13 @@ function getOrderGroups(orders = []) {
 
 export async function autoDirectorData() {
   const { agentos, sandwich, groq } = getClients();
+
+  const memories = await getAgentMemory("directeur");
+
+const memoryText =
+  (memories || [])
+    .map((m) => `- ${m.title}: ${m.content}`)
+    .join("\n") || "Aucune mémoire opérationnelle.";
 
   if (!sandwich) {
     throw new Error("Supabase La Pause Sandwich non configuré");

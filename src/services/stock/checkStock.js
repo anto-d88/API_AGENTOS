@@ -8,6 +8,11 @@ import {
   sendTelegramMessage
 } from "../telegram.js";
 
+import {
+  emitEvent
+} from "../../core/eventBus.js";
+
+
 export async function
 checkStockData() {
 
@@ -66,6 +71,7 @@ checkStockData() {
     if (
       stock <= threshold &&
       !alertSent
+      
     ) {
 
       const title =
@@ -169,6 +175,20 @@ checkStockData() {
             stock
         })
         .eq("id", product.id);
+
+        await emitEvent(
+  "stock.low",
+  {
+    productId:
+      product.id,
+
+    productName,
+
+    stock,
+
+    threshold
+  }
+);
 
     }
 
