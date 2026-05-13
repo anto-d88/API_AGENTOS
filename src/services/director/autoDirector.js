@@ -1,6 +1,6 @@
 import { getClients } from "../clients.js";
 import { createLog } from "../logger.js";
-import { getAgentMemory } from "../memory/getAgentMemory.js";
+import { getRelevantMemory } from "../memory/getRelevantMemory.js";
 
 function normalizeStatus(status) {
   return String(status || "")
@@ -80,7 +80,20 @@ function getOrderGroups(orders = []) {
 export async function autoDirectorData() {
   const { agentos, sandwich, groq } = getClients();
 
-  const memories = await getAgentMemory("directeur");
+  const memories = await getRelevantMemory({
+  agent_id: "directeur",
+  keywords: [
+    "urgence",
+    "priorité",
+    "livraison",
+    "stock",
+    "commande",
+    "planning",
+    "retard",
+    "business"
+  ],
+  limit: 15
+});
 
 const memoryText =
   (memories || [])
