@@ -1,16 +1,17 @@
 import dotenv from "dotenv";
-
 dotenv.config();
+
 import express from "express";
-import OpenAI from "openai";
-import { createClient } from "@supabase/supabase-js";
+
 import { getClients } from "../services/clients.js";
 import { createLog } from "../services/logger.js";
 import { sendTelegramMessage } from "../services/telegram.js";
+
 import { getPlanningData } from "../services/planning/getPlanning.js";
 import { generatePlanningData } from "../services/planning/generatePlanning.js";
 import { checkStockData } from "../services/stock/checkStock.js";
 import { checkOrdersData } from "../services/orders/checkOrders.js";
+import { checkAlertsData } from "../services/alerts/checkAlerts.js";
 
 const router = express.Router();
 
@@ -92,26 +93,6 @@ function getOrderGroups(orders = []) {
 }
 
 
-
-  let sandwich = null;
-
-  if (
-    process.env.SANDWICH_SUPABASE_URL &&
-    process.env.SANDWICH_SUPABASE_SERVICE_ROLE_KEY
-  ) {
-    sandwich = createClient(
-      process.env.SANDWICH_SUPABASE_URL,
-      process.env.SANDWICH_SUPABASE_SERVICE_ROLE_KEY
-    );
-  }
-
-  const groq = new OpenAI({
-    apiKey: process.env.GROQ_API_KEY || "missing",
-    baseURL: "https://api.groq.com/openai/v1"
-  });
-
-  return { agentos, sandwich, groq };
-
 function checkEnv() {
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
     return "Supabase AgentOS non configuré";
@@ -179,63 +160,26 @@ async function businessOverview(req, res) {
 }
 
 async function checkAlerts(req, res) {
-  const envError = checkEnv();
-  if (envError) return res.status(500).json({ error: envError });
 
-  const { agentos, sandwich } = getClients();
+  try {
 
-  const { data: products, error: productsError } = await sandwich
-    .from("products")
-    .select("*")
-    .order("name", { ascending: true });
+    const result =
+      await checkAlertsData();
 
-  if (productsError) throw productsError;
+    return res.status(200).json({
+      success: true,
+      ...result
+    });
 
-  const lowStock = (products || []).filter((product) => {
-    const stock = Number(product.stock_quantity || 0);
-    const threshold = Number(product.low_stock_threshold ?? 5);
-    return stock <= threshold;
-  });
+  } catch (error) {
 
-  const createdAlerts = [];
+    return res.status(500).json({
+      success: false,
+      error:
+        error.message
+    });
 
-  for (const product of lowStock) {
-    const stock = Number(product.stock_quantity || 0);
-    const productName = product.name || product.title || "Produit sans nom";
-
-    const alert = {
-      title: "Stock faible",
-      message: `${productName} presque en rupture (${stock})`,
-      priority: stock === 0 ? "urgent" : "high",
-      read: false
-    };
-
-    const { data: existing, error: existingError } = await agentos
-      .from("agent_alerts")
-      .select("id")
-      .eq("message", alert.message)
-      .eq("read", false)
-      .limit(1);
-
-    if (existingError) throw existingError;
-
-    if (!existing || existing.length === 0) {
-      const { error: insertError } = await agentos
-        .from("agent_alerts")
-        .insert([alert]);
-
-      if (insertError) throw insertError;
-
-      createdAlerts.push(alert);
-    }
   }
-
-  return res.status(200).json({
-    success: true,
-    lowStockDetected: lowStock.length,
-    alertsCreated: createdAlerts.length,
-    alerts: createdAlerts
-  });
 }
 
 async function checkOrders(req, res) {

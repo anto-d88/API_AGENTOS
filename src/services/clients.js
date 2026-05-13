@@ -33,7 +33,9 @@ export function getClients() {
       baseURL:
         "https://api.groq.com/openai/v1"
     });
-
+console.log("SANDWICH URL:", process.env.SANDWICH_SUPABASE_URL);
+console.log("SANDWICH KEY EXISTS:", !!process.env.SANDWICH_SUPABASE_SERVICE_ROLE_KEY);
+console.log("SANDWICH CLIENT EXISTS:", !!sandwich);
   return {
     agentos,
     sandwich,
