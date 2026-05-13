@@ -1,6 +1,12 @@
+import dotenv from "dotenv";
+
+dotenv.config();
 import express from "express";
 import OpenAI from "openai";
 import { createClient } from "@supabase/supabase-js";
+import { getClients } from "../services/clients.js";
+import { createLog } from "../services/logger.js";
+import { sendTelegramMessage } from "../services/telegram.js";
 
 const router = express.Router();
 
@@ -81,24 +87,26 @@ function getOrderGroups(orders = []) {
   };
 }
 
-function getClients() {
-  const agentos = createClient(
-    process.env.SUPABASE_URL,
-    process.env.SUPABASE_SERVICE_ROLE_KEY
-  );
 
-  const sandwich = createClient(
-    process.env.SANDWICH_SUPABASE_URL,
+
+  let sandwich = null;
+
+  if (
+    process.env.SANDWICH_SUPABASE_URL &&
     process.env.SANDWICH_SUPABASE_SERVICE_ROLE_KEY
-  );
+  ) {
+    sandwich = createClient(
+      process.env.SANDWICH_SUPABASE_URL,
+      process.env.SANDWICH_SUPABASE_SERVICE_ROLE_KEY
+    );
+  }
 
   const groq = new OpenAI({
-    apiKey: process.env.GROQ_API_KEY,
+    apiKey: process.env.GROQ_API_KEY || "missing",
     baseURL: "https://api.groq.com/openai/v1"
   });
 
   return { agentos, sandwich, groq };
-}
 
 function checkEnv() {
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -115,58 +123,7 @@ function checkEnv() {
   return null;
 }
 
-async function createLog(agentos, log) {
-  try {
-    await agentos.from("agent_logs").insert([
-      {
-        agent_name: log.agent_name || "Agent IA",
-        action_type: log.action_type || "general",
-        title: log.title || "Action système",
-        description: log.description || "",
-        status: log.status || "success",
-        priority: log.priority || "medium",
-        metadata: log.metadata || {}
-      }
-    ]);
-  } catch (error) {
-    console.error("Erreur création log :", error);
-  }
-}
 
-async function sendTelegramMessage(message) {
-  try {
-    const token = process.env.TELEGRAM_BOT_TOKEN;
-    const chatId = process.env.TELEGRAM_CHAT_ID;
-
-    if (!token || !chatId) {
-      return {
-        ok: false,
-        error: "Telegram non configuré"
-      };
-    }
-
-    const response = await fetch(
-      `https://api.telegram.org/bot${token}/sendMessage`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          chat_id: chatId,
-          text: message
-        })
-      }
-    );
-
-    return await response.json();
-  } catch (error) {
-    return {
-      ok: false,
-      error: error.message
-    };
-  }
-}
 
 async function businessOverview(req, res) {
   const envError = checkEnv();
