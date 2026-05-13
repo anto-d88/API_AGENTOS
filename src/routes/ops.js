@@ -7,6 +7,10 @@ import { createClient } from "@supabase/supabase-js";
 import { getClients } from "../services/clients.js";
 import { createLog } from "../services/logger.js";
 import { sendTelegramMessage } from "../services/telegram.js";
+import { getPlanningData } from "../services/planning/getPlanning.js";
+import { generatePlanningData } from "../services/planning/generatePlanning.js";
+import { checkStockData } from "../services/stock/checkStock.js";
+import { checkOrdersData } from "../services/orders/checkOrders.js";
 
 const router = express.Router();
 
@@ -235,193 +239,42 @@ async function checkAlerts(req, res) {
 }
 
 async function checkOrders(req, res) {
-  const envError = checkEnv();
-  if (envError) return res.status(500).json({ error: envError });
+  try {
+    const result = await checkOrdersData();
 
-  const { agentos, sandwich } = getClients();
-
-  const { data: orders, error } = await sandwich
-    .from("orders")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .limit(20);
-
-  if (error) throw error;
-
-  const actionableOrders = (orders || []).filter((order) => {
-    const status = normalizeStatus(order.status);
-
-    return [
-      "nouvelle",
-      "new",
-      "payee",
-      "paye",
-      "en_preparation",
-      "en preparation"
-    ].includes(status);
-  });
-
-  let created = 0;
-
-  for (const order of actionableOrders) {
-    const title = `Commande #${order.id}`;
-
-    const { data: existing } = await agentos
-      .from("agent_tasks")
-      .select("id")
-      .eq("title", title)
-      .eq("status", "open")
-      .limit(1);
-
-    if (!existing || existing.length === 0) {
-      await agentos.from("agent_tasks").insert([
-        {
-          from_agent: "Surveillance Commandes",
-          to_agent: "Agent Commandes",
-          title,
-          description:
-            `Commande ${order.id} - ` +
-            `${order.customer_name || "Client"} - ` +
-            `${getOrderTotal(order)}€`,
-          priority: "high",
-          type: "order",
-          status: "open",
-          completed: false
-        }
-      ]);
-
-      await createLog(agentos, {
-        agent_name: "Agent Commandes",
-        action_type: "task_created",
-        title: "Tâche commande créée",
-        description: `Commande ${order.id} envoyée à l'équipe`,
-        status: "success",
-        priority: "high"
-      });
-
-      created++;
-    }
+    return res.status(200).json({
+      success: true,
+      ...result
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      error: error.message
+    });
   }
-
-  return res.status(200).json({
-    success: true,
-    orders: orders?.length || 0,
-    actionableOrders: actionableOrders.length,
-    tasksCreated: created
-  });
 }
 
 async function checkStock(req, res) {
-  const envError = checkEnv();
-  if (envError) return res.status(500).json({ error: envError });
 
-  const { agentos, sandwich } = getClients();
+  try {
 
-  const { data: products, error } = await sandwich
-    .from("products")
-    .select("*")
-    .order("name", { ascending: true });
+    const result =
+      await checkStockData();
 
-  if (error) throw error;
+    return res.status(200).json({
+      success: true,
+      ...result
+    });
 
-  let lowStockProducts = 0;
-  let tasksCreated = 0;
-  let alertsCreated = 0;
-  let telegramSent = 0;
-  let resetProducts = 0;
+  } catch (error) {
 
-  for (const product of products || []) {
-    const stock = Number(product.stock_quantity || 0);
-    const threshold = Number(product.low_stock_threshold ?? 5);
-    const productName = product.name || product.title || "Produit sans nom";
-    const alertSent = Boolean(product.stock_alert_sent);
+    return res.status(500).json({
+      success: false,
+      error:
+        error.message
+    });
 
-    if (stock <= threshold) {
-      lowStockProducts++;
-    }
-
-    if (stock <= threshold && !alertSent) {
-      const title = `Réapprovisionnement ${productName}`;
-      const alertMessage = `${productName} presque en rupture (stock : ${stock})`;
-
-      await agentos.from("agent_tasks").insert([
-        {
-          title,
-          description: `Stock faible détecté : ${productName} (stock actuel : ${stock}, seuil : ${threshold})`,
-          type: "stock_alert",
-          priority: stock === 0 ? "urgent" : "high",
-          status: "open",
-          completed: false,
-          from_agent: "Agent Stock",
-          to_agent: "Agent Directeur IA"
-        }
-      ]);
-
-      tasksCreated++;
-
-      await agentos.from("agent_alerts").insert([
-        {
-          title: "Stock faible",
-          message: alertMessage,
-          priority: stock === 0 ? "urgent" : "high",
-          read: false
-        }
-      ]);
-
-      alertsCreated++;
-
-      const telegramResult = await sendTelegramMessage(
-        `🚨 Stock faible La Pause Sandwich\n\n📦 Produit : ${productName}\n📉 Stock actuel : ${stock}\n🎯 Seuil : ${threshold}\n⚠️ Priorité : ${
-          stock === 0 ? "URGENT" : "HIGH"
-        }`
-      );
-
-      if (telegramResult?.ok) {
-        telegramSent++;
-      }
-
-      await createLog(agentos, {
-        agent_name: "Agent Stock",
-        action_type: "stock_alert",
-        title: "Alerte stock créée",
-        description: `${productName} est presque en rupture (${stock})`,
-        status: "warning",
-        priority: stock === 0 ? "urgent" : "high"
-      });
-
-      await sandwich
-        .from("products")
-        .update({
-          stock_alert_sent: true,
-          stock_alert_sent_at: new Date().toISOString(),
-          last_stock_alert_level: stock
-        })
-        .eq("id", product.id);
-    }
-
-    if (stock > threshold && alertSent) {
-      await sandwich
-        .from("products")
-        .update({
-          stock_alert_sent: false,
-          stock_alert_sent_at: null,
-          last_stock_alert_level: null
-        })
-        .eq("id", product.id);
-
-      resetProducts++;
-    }
   }
-
-  return res.status(200).json({
-    success: true,
-    productsChecked: products?.length || 0,
-    lowStockProducts,
-    tasksCreated,
-    alertsCreated,
-    telegramSent,
-    resetProducts
-  });
 }
 
 async function dailyReport(req, res) {
@@ -941,193 +794,58 @@ async function addToPlanning(req, res) {
 }
 
 async function getPlanning(req, res) {
-  const { agentos } = getClients();
 
-  const { data, error } = await agentos
-    .from("agent_planning")
-    .select("*")
-    .order("planned_date", { ascending: true })
-    .order("planned_time", { ascending: true });
-
-  if (error) throw error;
-
-  return res.status(200).json({
-    success: true,
-    planning: data || []
-  });
-}
-
-async function generatePlanning(req, res) {
   try {
-    const envError = checkEnv();
 
-    if (envError) {
-      return res.status(500).json({
-        success: false,
-        error: envError
-      });
-    }
-
-    if (!process.env.GROQ_API_KEY) {
-      return res.status(500).json({
-        success: false,
-        error: "Groq non configuré"
-      });
-    }
-
-    const { agentos, groq } = getClients();
-
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-
-    const planningDate = tomorrow.toISOString().slice(0, 10);
-
-    await agentos
-      .from("agent_planning")
-      .delete()
-      .eq("planned_date", planningDate)
-      .eq("generated_by_ai", true);
-
-    const { data: tasks } = await agentos
-      .from("agent_tasks")
-      .select("*")
-      .neq("status", "done")
-      .order("priority", { ascending: false });
-
-    const { data: alerts } = await agentos
-      .from("agent_alerts")
-      .select("*")
-      .eq("read", false)
-      .eq("deleted", false);
-
-    const { data: memories } = await agentos
-      .from("agent_operational_memory")
-      .select("*")
-      .eq("is_active", true);
-
-    const tasksText =
-      (tasks || []).map((t) => `- ${t.title} (${t.priority})`).join("\n") ||
-      "Aucune tâche.";
-
-    const alertsText =
-      (alerts || []).map((a) => `- ${a.title}: ${a.message}`).join("\n") ||
-      "Aucune alerte.";
-
-    const memoriesText =
-      (memories || []).map((m) => `- ${m.title}: ${m.content}`).join("\n") ||
-      "";
-
-    const prompt = `
-Tu es l'Agent Planning IA de La Pause Sandwich.
-
-MISSION :
-Créer un planning intelligent et réaliste pour demain.
-
-DATE :
-${planningDate}
-
-MÉMOIRE OPÉRATIONNELLE :
-${memoriesText}
-
-TÂCHES :
-${tasksText}
-
-ALERTES :
-${alertsText}
-
-RÈGLES :
-- Tu dois créer au minimum 5 actions même si les données sont faibles.
-- Organise la journée intelligemment.
-- Respecte les créneaux livraison 11h00, 13h00, 15h00.
-- Prévois toujours : vérification commandes, stock/courses, préparation cuisine, livraison, nettoyage, administratif/prospection.
-- Réponse UNIQUEMENT en JSON valide.
-- Ne mets aucun texte avant ou après le JSON.
-
-FORMAT :
-[
-  {
-    "title": "Préparation cuisine",
-    "description": "Préparer les sandwichs du midi",
-    "planned_time": "10:30",
-    "priority": "high"
-  }
-]
-`;
-
-    const completion = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
-      temperature: 0.2,
-      max_tokens: 1200,
-      messages: [
-        {
-          role: "user",
-          content: prompt
-        }
-      ]
-    });
-
-    const raw = completion.choices?.[0]?.message?.content || "[]";
-    const match = raw.match(/\[[\s\S]*\]/);
-    const planning = match ? JSON.parse(match[0]) : [];
-
-    const inserted = [];
-    const insertErrors = [];
-
-    for (const item of planning) {
-      const cleanTime =
-        item.planned_time && String(item.planned_time).trim() !== ""
-          ? `${String(item.planned_time).slice(0, 5)}:00`
-          : null;
-
-      const { data, error } = await agentos
-        .from("agent_planning")
-        .insert([
-          {
-            title: item.title || "Action IA",
-            description: item.description || "",
-            planned_date: planningDate,
-            planned_time: cleanTime,
-            priority: String(item.priority || "medium").toLowerCase(),
-            generated_by_ai: true,
-            status: "planned",
-            completed: false
-          }
-        ])
-        .select()
-        .single();
-
-      if (error) {
-        insertErrors.push({
-          title: item.title,
-          error: error.message
-        });
-      } else if (data) {
-        inserted.push(data);
-      }
-    }
-
-    await createLog(agentos, {
-      agent_name: "Agent Planning IA",
-      action_type: "planning_generation",
-      title: "Planning généré automatiquement",
-      description: `${inserted.length} actions planifiées pour ${planningDate}`,
-      status: "success",
-      priority: "high"
-    });
+    const planning =
+      await getPlanningData();
 
     return res.status(200).json({
       success: true,
-      planningDate,
-      generated: inserted.length,
-      raw,
-      insertErrors,
-      planning: inserted
+      planning
     });
+
   } catch (error) {
+
     return res.status(500).json({
       success: false,
-      error: error.message
+      error:
+        error.message
     });
+
+  }
+}
+
+async function generatePlanning(req, res) {
+
+  try {
+
+    const result =
+      await generatePlanningData();
+
+    return res.status(200).json({
+      success: true,
+      planningDate:
+        result.planningDate,
+
+      generated:
+        result.inserted.length,
+
+      planning:
+        result.inserted,
+
+      raw:
+        result.raw
+    });
+
+  } catch (error) {
+
+    return res.status(500).json({
+      success: false,
+      error:
+        error.message
+    });
+
   }
 }
 
